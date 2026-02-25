@@ -16,19 +16,58 @@ the ADC if you find the timing drift is small.
 """
 
 from PRBS_utils import *
-# ADC clock rate.. how quickly the ADC is updating (max of 30kHz)
+import matplotlib.pyplot as plt
+import time
+import sys
+import os
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_script_dir, "High-Precision-AD-DA-Board-Demo-Code", "RaspberryPI", "ADS1256", "python3"))
+import ADS1256
+import spidev
+import RPi.GPIO as GPIO
 
-# PRBS signal should be max at 15kHz... 
-# is this the same thing as how fast we're toggling the drive line
+# we're setting the drive lines up ourselves ... so we have to use readADCdata
+ADC = ADS1256.ADS1256()
+ADC.ADS1256_init()
+# GPIO setup
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+GPIO.setup(21, GPIO.OUT) # drive 5 (pin 4)
+GPIO.setup(20, GPIO.OUT) # drive 4 (pin 3)
+GPIO.setup(16, GPIO.OUT) # drive 3 (pin 2)
+GPIO.setup(12, GPIO.OUT) # drive 2 (pin 1)
+GPIO.setup(7, GPIO.OUT) # drive 1 (pin 0)
 
-# we're setting the drive lines up ourselves 
 
-# sense_line = 
-prbs_signal = bpsk(ninebit_lfsr())
-notouch_signal = autocorrelation(prbs_signal,sense_line,511)
 
-# find top five peaks and annotate each with (lag, value)
-sorted_indices = np.argsort(notouch_signal)
+
+
+
+# we need to iterate through each channel...
+# do we do getChannalValue or readADCvalue
+
+adc_value = ADC.ADS1256_GetChannalValue(7)*5.0/0x7fffff # this should be clocked at 30kHz
+
+
+# we're driving the 5 GPIO pins and each PRBS signal is associated with a delay since each drive line has its own delay
+# it comes from the GPIO pins ... do we need to initialize them? each one
+prbs_signal = bpsk(lfsr(...))
+GPIO.output(21, prbs_signal)
+
+touch_signal = autocorrelation(prbs_signal,adc_value,511)
+
+
+
+
+
+sorted_indices = np.argsort(touch_signal)
 top_n_indices = np.sort(sorted_indices[-5:])
 for i in top_n_indices:
-    lag, val = i, notouch_signal[i]
+    lag, val = i, touch_signal[i]
+
+
+plt.grid()
+plt.xlabel("Lag")
+plt.ylabel("Autocorrelation")
+plt.title("Autocorrelation between no touch ADC waveform and PRBS511")
+plt.show()
