@@ -1,5 +1,8 @@
 import time
 import sys
+import os
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_script_dir, "High-Precision-AD-DA-Board-Demo-Code", "RaspberryPI", "ADS1256", "python3"))
 import ADS1256
 import spidev
 import RPi.GPIO as GPIO
@@ -30,10 +33,10 @@ Try to improve the GPIO signal by increasing the GPIO_FREQ_FACTOR (lower the fre
 """
 
 
-SETUP_SPI = False 
-SET_CHANNEL = False
+SETUP_SPI = True 
+SET_CHANNEL = True
 FREQUENCY = 20000
-GPIO_FREQ_FACTOR = 1 # The frequency of the GPIO signal is GPIO_FREQ_FACTOR times less than the frequency of the ADC signal
+GPIO_FREQ_FACTOR = 10 # The frequency of the GPIO signal is GPIO_FREQ_FACTOR times less than the frequency of the ADC signal
 
 
 class FrequencyDetector:
