@@ -15,6 +15,7 @@ the ADC may be lower (>20 kHz). You can also try to clock the PRBS at the same r
 the ADC if you find the timing drift is small.
 """
 
+import csv
 import matplotlib.pyplot as plt
 import time
 import sys
@@ -129,6 +130,21 @@ for i in range(8):
         lag, val = j, touch_signal[i][j]
         print(f"Channel {i}, Lag {lag}, Value {val}")   # we need to plot the correlation for each channel
 
+# Save all data to CSV
+out_dir = _script_dir
+# ADC samples: rows = sample index (0..n-1), cols = channel 0..7
+np.savetxt(os.path.join(out_dir, "adc_samples.csv"), adc_values.T, delimiter=",", header="ch0,ch1,ch2,ch3,ch4,ch5,ch6,ch7", comments="")
+# Correlation: rows = lag (0..n-1), cols = channel 0..7
+np.savetxt(os.path.join(out_dir, "correlation.csv"), touch_signal.T, delimiter=",", header="ch0,ch1,ch2,ch3,ch4,ch5,ch6,ch7", comments="")
+# Peak summary: channel, peak_lag, peak_value
+with open(os.path.join(out_dir, "peaks_summary.csv"), "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["channel", "peak_lag", "peak_value"])
+    for i in range(8):
+        peak_lag = int(np.argmax(touch_signal[i]))
+        peak_val = touch_signal[i][peak_lag]
+        w.writerow([i, peak_lag, peak_val])
+print(f"Saved: adc_samples.csv, correlation.csv, peaks_summary.csv -> {out_dir}")
 
 plt.grid()
 plt.xlabel("Lag")
