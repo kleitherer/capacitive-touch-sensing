@@ -1,15 +1,8 @@
 import os
 import sys
-import threading
-import socket
-
 import time
 import numpy as np
 
-# WEB_VIEWER: open http://<pi-ip>:8080 in your browser for live view
-# SAVE_ONLY: just save to file (no web server)
-WEB_VIEWER = True
-WEB_PORT = 8080
 SAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "heatmap_latest.png")
 
 import matplotlib
@@ -57,28 +50,9 @@ DRIVE = [21, 7, 12, 16, 20]
 SENSE = [1, 2, 3, 4, 5, 6, 7]
 
 def drive_prbs_bit(prbs_matrix, s):
-    """Set all DRIVE GPIO pins for PRBS index s."""
     for i, pin in enumerate(DRIVE):
         GPIO.output(pin, int(prbs_matrix[i, s]))
 
-def _get_local_ip():
-    """Get Pi's IP for display in browser URL."""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "localhost"
-
-def _run_web_server(port, serve_dir):
-    """Serve heatmap image + auto-refresh HTML on port."""
-    import http.server
-    os.chdir(serve_dir)
-    handler = http.server.SimpleHTTPRequestHandler
-    with http.server.HTTPServer(("", port), handler) as httpd:
-        httpd.serve_forever()
 
 if __name__ == '__main__':
     # ---- ADC setup ----
@@ -122,44 +96,6 @@ if __name__ == '__main__':
 
     threshold = 200
 
-    # ---- Plot setup ----
-    print("Setting up the plot")
-    fig, ax = plt.subplots(1, 1)
-    heatmap = ax.imshow(xcor, cmap='viridis', interpolation='nearest', vmin=threshold)
-    plt.colorbar(heatmap)
-    ax.invert_yaxis()
-    ax.invert_xaxis()
-    plt.title("Heatmap (Sense x Drive)")
-
-    if WEB_VIEWER:
-        # Create HTML that auto-refreshes the image
-        lab_dir = os.path.dirname(os.path.abspath(__file__))
-        html_path = os.path.join(lab_dir, "heatmap_viewer.html")
-        with open(html_path, "w") as f:
-            f.write("""<!DOCTYPE html>
-<html><head><title>Touch Sensor Live</title></head>
-<body style="margin:20px;background:#1a1a1a;color:#eee;">
-<h2>Touch Sensor Heatmap (live)</h2>
-<p>Refreshes every 0.5 s</p>
-<img src="heatmap_latest.png" id="img" style="max-width:90%;" onerror="this.style.display='none'">
-<script>
-setInterval(function(){
-  var i = document.getElementById('img');
-  i.src = 'heatmap_latest.png?t=' + Date.now();
-}, 500);
-</script>
-</body></html>""")
-        server = threading.Thread(target=_run_web_server, args=(WEB_PORT, lab_dir), daemon=True)
-        server.start()
-        pi_ip = _get_local_ip()
-        print(f"Live view: open http://{pi_ip}:{WEB_PORT}/heatmap_viewer.html in your browser")
-    print("Plot setup successful")
-
-    # ---- Timing targets (optional) ----
-    # Your original code sets a target PRBS bit rate; in practice Python/GPIO/ADS1256 calls dominate.
-    target_freq = 15e3
-    target_period = 1.0 / target_freq
-
     frame_count = 0
     start_time = time.time()
 
@@ -175,8 +111,6 @@ setInterval(function(){
             # Restart PRBS for this sense line
             # (this is what your lab text explicitly suggests)
             for s in range(length):
-                loop_start = time.time()
-
                 # Drive PRBS bit on all 5 drive lines
                 drive_prbs_bit(prbs, s)
 
@@ -201,17 +135,20 @@ setInterval(function(){
                 xcor_raw[j, 4 * shift],
             ]
 
-        # Threshold and update plot ONCE per frame (after all sense lines scanned)
         xcor_plot = xcor.copy()
         xcor_plot[xcor_plot < threshold] = 0
 
-        heatmap.set_data(xcor_plot)
-        fig.savefig(SAVE_PATH, dpi=150)
+        plt.figure(figsize=(6, 5))
+        plt.imshow(xcor_plot, cmap='viridis', interpolation='nearest', vmin=threshold)
+        plt.colorbar()
+        plt.title("Heatmap (Sense x Drive)")
+        plt.gca().invert_yaxis()
+        plt.gca().invert_xaxis()
+        plt.savefig(SAVE_PATH, dpi=150, bbox_inches='tight')
+        plt.close()
 
         frame_count += 1
-
-        # Optional: print frame rate occasionally
         if frame_count % 10 == 0:
             elapsed = time.time() - start_time
             fps = frame_count / elapsed if elapsed > 0 else 0
-            print(f"Frames: {frame_count}, approx frame rate: {fps:.3f} Hz")
+            print(f"Frames: {frame_count}, {fps:.2f} Hz")
