@@ -11,6 +11,7 @@ from scipy.optimize import curve_fit
 taps_prbs7 = 0x6
 taps_prbs15 = 0xC
 taps_prbs127 = 0x60
+taps_prbs255 = 0x8E   # PRBS-8: length 2^8-1 = 255
 taps_prbs511 = 0x110
 taps_prbs1023 = 0x240
 
