@@ -4,10 +4,12 @@ import time
 import numpy as np
 
 SAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "heatmap_latest.png")
+CENTROID_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "centroid_ellipse.png")
 
 import matplotlib
-matplotlib.use('Agg')  # No display needed; run headless on Pi
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.patches import Ellipse
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(script_dir, "High-Precision-AD-DA-Board-Demo-Code", "RaspberryPI", "ADS1256", "python3"))
 import ADS1256
@@ -52,6 +54,38 @@ SENSE = [1, 2, 3, 4, 5, 6, 7]
 def drive_prbs_bit(prbs_matrix, s):
     for i, pin in enumerate(DRIVE):
         GPIO.output(pin, int(prbs_matrix[i, s]))
+
+
+def centroid_and_ellipse(data, threshold):
+    """
+    Compute weighted centroid and fit ellipse to touch region.
+    data: (n_sense, n_drive) heatmap (values below threshold should be 0)
+    Returns: (cx, cy, major_axis, minor_axis, angle_deg) or None if no touch
+    """
+    w = np.maximum(data, 0)
+    total = np.sum(w)
+    if total < 1e-9:
+        return None
+
+    n_sense, n_drive = data.shape
+    yy, xx = np.mgrid[0:n_sense, 0:n_drive]
+    cx = np.sum(xx * w) / total
+    cy = np.sum(yy * w) / total
+
+    dx = xx - cx
+    dy = yy - cy
+    cov_xx = np.sum(w * dx * dx) / total
+    cov_yy = np.sum(w * dy * dy) / total
+    cov_xy = np.sum(w * dx * dy) / total
+    cov = np.array([[cov_xx, cov_xy], [cov_xy, cov_yy]])
+
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    eigvals = np.maximum(eigvals, 1e-9)
+    major = 2 * np.sqrt(eigvals[1])
+    minor = 2 * np.sqrt(eigvals[0])
+    angle = np.degrees(np.arctan2(eigvecs[1, 1], eigvecs[0, 1]))
+
+    return (cx, cy, major, minor, angle)
 
 
 if __name__ == '__main__':
@@ -138,13 +172,35 @@ if __name__ == '__main__':
         xcor_plot = xcor.copy()
         xcor_plot[xcor_plot < threshold] = 0
 
+        # Heatmap plot
         plt.figure(figsize=(6, 5))
-        plt.imshow(xcor_plot, cmap='viridis', interpolation='nearest', vmin=threshold)
+        vmax_h = max(threshold, np.max(xcor_plot), 1)
+        plt.imshow(xcor_plot, cmap='viridis', interpolation='nearest', vmin=0, vmax=vmax_h)
         plt.colorbar()
         plt.title("Heatmap (Sense x Drive)")
         plt.gca().invert_yaxis()
         plt.gca().invert_xaxis()
         plt.savefig(SAVE_PATH, dpi=150, bbox_inches='tight')
+        plt.close()
+
+        # Centroid + ellipse plot
+        result = centroid_and_ellipse(xcor_plot, threshold)
+        fig, ax = plt.subplots(figsize=(6, 5))
+        vmin_plot = 0
+        vmax_plot = max(threshold, np.max(xcor_plot), 1)
+        ax.imshow(xcor_plot, cmap='viridis', interpolation='nearest', vmin=vmin_plot, vmax=vmax_plot)
+        ax.invert_yaxis()
+        ax.invert_xaxis()
+        if result is not None:
+            cx, cy, major, minor, angle = result
+            ax.plot(cx, cy, 'r+', markersize=12, markeredgewidth=2)
+            ellipse = Ellipse((cx, cy), major, minor, angle=angle, fill=False,
+                              edgecolor='red', linewidth=2)
+            ax.add_patch(ellipse)
+            ax.set_title(f"Centroid ({cx:.2f}, {cy:.2f}) | Major={major:.2f} Minor={minor:.2f}")
+        else:
+            ax.set_title("No touch detected")
+        plt.savefig(CENTROID_PATH, dpi=150, bbox_inches='tight')
         plt.close()
 
         frame_count += 1
