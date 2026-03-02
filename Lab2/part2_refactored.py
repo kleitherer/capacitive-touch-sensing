@@ -161,7 +161,7 @@ def save_heatmap_image(xcor_plot: np.ndarray, cfg: Config):
     result = centroid_and_ellipse(xcor_plot, cfg.threshold)
     fig, ax = plt.subplots(figsize=(6, 5))
     vmax_h = max(cfg.threshold, np.max(xcor_plot), 1)
-    im = ax.imshow(xcor_plot, cmap="plasma", interpolation="nearest", vmin=0, vmax=vmax_h)
+    im = ax.imshow(xcor_plot, cmap="RdPu", interpolation="nearest", vmin=0, vmax=vmax_h)
     fig.colorbar(im, ax=ax)
     ax.invert_yaxis()
     ax.invert_xaxis()
