@@ -39,7 +39,7 @@ TOUCH_DELTA_THRESHOLD = 80.0
 
 # step 2 setting:
 # set to True when you place a still touch (ex: penny), then run once.
-RUN_JITTER_TEST = True
+RUN_JITTER_TEST = False
 JITTER_SAMPLES = 1000
 
 
