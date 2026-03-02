@@ -1,5 +1,4 @@
 import os
-import sys
 import time
 from dataclasses import dataclass
 
@@ -8,61 +7,36 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
-import RPi.GPIO as GPIO
 
+import part1 as p1
 
+# using class bc easier to copy/paste to part2 and part3
 @dataclass(frozen=True)
 class Config:
     save_path: str
     centroid_path: str
     drive_pins: tuple
     sense_channels: tuple
-    polynomial: int
-    seed: int
+    taps: int
+    phase: int
     threshold: float
 
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(SCRIPT_DIR, "High-Precision-AD-DA-Board-Demo-Code", "RaspberryPI", "ADS1256", "python3"))
-import ADS1256 
-
-
 CFG = Config(
     save_path=os.path.join(SCRIPT_DIR, "heatmap_latest.png"),
     centroid_path=os.path.join(SCRIPT_DIR, "centroid_ellipse.png"),
-    drive_pins=(21, 7, 12, 16, 20),   
+    # bcm pins from the lab wiring
+    drive_pins=(21, 7, 12, 16, 20),
+    # these are the 7 receive/sense lines we scan one by one
     sense_channels=(1, 2, 3, 4, 5, 6, 7),
-    polynomial=0xB8,
-    seed=0x01,
+    # using prbs-8 taps here
+    taps=0xB8,
+    phase=0x01,
     threshold=200.0,
 )
 
 
-def generate_prbs(polynomial: int, length: int, seed: int) -> np.ndarray:
-    num_bits = polynomial.bit_length()
-    lfsr = [int(bit) for bit in format(seed, f"0{num_bits}b")]
-    seq = []
-    for _ in range(length):
-        seq.append(lfsr[-1])
-        feedback = 0
-        for bit_pos in range(num_bits):
-            if (polynomial >> bit_pos) & 1:
-                feedback ^= lfsr[-(bit_pos + 1)]
-        lfsr = lfsr[1:] + [feedback]
-    return np.array(seq, dtype=np.int8)
-
-
-def circular_cross_correlation(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    n = max(len(x), len(y))
-    x = np.pad(x, (0, n - len(x)), mode="constant")
-    y = np.pad(y, (0, n - len(y)), mode="constant")
-    out = np.zeros(n, dtype=np.float64)
-    for k in range(n):
-        out[k] = np.sum(x * np.roll(y, k))
-    return out
-
-
-def centroid_and_ellipse(data: np.ndarray, threshold: float):
+def centroid_and_ellipse(data, threshold):
     w = np.maximum(data, 0)
     total = np.sum(w)
     if total < 1e-9:
@@ -105,34 +79,15 @@ def draw_centroid_overlay(ax, result):
     ax.add_patch(ellipse)
 
 
-def setup_adc_and_gpio(cfg: Config):
-    adc = ADS1256.ADS1256()
-    adc.ADS1256_init()
-    adc.ADS1256_WriteReg(0x00, 0x02)  # input buffer ON
-
-    GPIO.setwarnings(False)
-    GPIO.setmode(GPIO.BCM)
-    for pin in cfg.drive_pins:
-        GPIO.setup(pin, GPIO.OUT)
-        GPIO.output(pin, 0)
-
-    return adc
-
-
-def build_drive_sequences(cfg: Config):
-    length = (2 ** cfg.polynomial.bit_length()) - 1
+def build_drive_sequences(cfg):
+    length = (2 ** cfg.taps.bit_length()) - 1
     shift = length // len(cfg.drive_pins)
-    prbs0 = generate_prbs(cfg.polynomial, length, cfg.seed)
+    prbs0 = p1.generate_prbs(cfg.taps, length, cfg.phase)
     prbs_matrix = np.vstack([np.roll(prbs0, i * shift) for i in range(len(cfg.drive_pins))])
     return prbs0, prbs_matrix, length, shift
 
 
-def drive_one_bit(prbs_matrix: np.ndarray, bit_index: int, pins):
-    for i, pin in enumerate(pins):
-        GPIO.output(pin, int(prbs_matrix[i, bit_index]))
-
-
-def compute_touch_maps(adc, cfg: Config, prbs0: np.ndarray, prbs_matrix: np.ndarray, length: int, shift: int):
+def compute_touch_maps(adc, cfg, prbs0, prbs_matrix, length, shift):
     raw_sense = np.zeros((len(cfg.sense_channels), length), dtype=np.float64)
     xcor_raw = np.zeros((len(cfg.sense_channels), length), dtype=np.float64)
     xcor = np.zeros((len(cfg.sense_channels), len(cfg.drive_pins)), dtype=np.float64)
@@ -141,11 +96,11 @@ def compute_touch_maps(adc, cfg: Config, prbs0: np.ndarray, prbs_matrix: np.ndar
     for j, sense_ch in enumerate(cfg.sense_channels):
         adc.ADS1256_SetChannal(sense_ch)
         for s in range(length):
-            drive_one_bit(prbs_matrix, s, cfg.drive_pins)
+            p1.drive_one_bit(prbs_matrix, s, cfg.drive_pins)
             adc_value = adc.ADS1256_GetChannalValue(sense_ch)
             raw_sense[j, s] = adc_value * 5.0 / 0x7FFFFF
 
-        xcor_raw[j, :] = circular_cross_correlation(prbs0.astype(np.float64), raw_sense[j, :])
+        xcor_raw[j, :] = p1.circular_cross_correlation(prbs0.astype(np.float64), raw_sense[j, :])
         xcor[j, :] = [
             xcor_raw[j, 0],
             xcor_raw[j, 1 * shift],
@@ -157,7 +112,7 @@ def compute_touch_maps(adc, cfg: Config, prbs0: np.ndarray, prbs_matrix: np.ndar
     return xcor
 
 
-def save_heatmap_image(xcor_plot: np.ndarray, cfg: Config):
+def save_heatmap_image(xcor_plot, cfg):
     result = centroid_and_ellipse(xcor_plot, cfg.threshold)
     fig, ax = plt.subplots(figsize=(6, 5))
     vmax_h = max(cfg.threshold, np.max(xcor_plot), 1)
@@ -192,7 +147,7 @@ def save_heatmap_image(xcor_plot: np.ndarray, cfg: Config):
     plt.close(fig)
 
 
-def save_centroid_image(xcor_plot: np.ndarray, cfg: Config):
+def save_centroid_image(xcor_plot, cfg):
     result = centroid_and_ellipse(xcor_plot, cfg.threshold)
     fig, ax = plt.subplots(figsize=(6, 5))
     vmax_plot = max(cfg.threshold, np.max(xcor_plot), 1)
@@ -218,7 +173,7 @@ def save_centroid_image(xcor_plot: np.ndarray, cfg: Config):
 
 
 def main():
-    adc = setup_adc_and_gpio(CFG)
+    adc = p1.setup_adc_and_gpio(CFG)
     prbs0, prbs_matrix, length, shift = build_drive_sequences(CFG)
 
     frame_count = 0

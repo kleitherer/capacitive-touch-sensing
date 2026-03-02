@@ -9,42 +9,39 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import RPi.GPIO as GPIO
 
+# add ADS1256 driver folder path
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "High-Precision-AD-DA-Board-Demo-Code", "RaspberryPI", "ADS1256", "python3"))
+import ADS1256 
 
+# using class bc easier to copy/paste to part2 and part3
 @dataclass(frozen=True)
 class Config:
     autocorr_plot_path: str
     drive_pins: tuple
     sense_channels: tuple
-    polynomial: int
-    seed: int
-
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(
-    0,
-    os.path.join(
-        SCRIPT_DIR,
-        "High-Precision-AD-DA-Board-Demo-Code",
-        "RaspberryPI",
-        "ADS1256",
-        "python3",
-    ),
-)
-import ADS1256  # noqa: E402
-
+    taps: int
+    phase: int
 
 CFG = Config(
     autocorr_plot_path=os.path.join(SCRIPT_DIR, "autocorr_7ch_latest.png"),
+    # bcm pins from the lab wiring
     drive_pins=(21, 7, 12, 16, 20),
+    # these are the 7 receive/sense lines we scan one by one
     sense_channels=(1, 2, 3, 4, 5, 6, 7),
-    polynomial=0xB8,
-    seed=0x01,
+    # using prbs-8 taps here
+    taps=0xB8,
+    phase=0x01,
 )
 
 
-def generate_prbs(polynomial: int, length: int, seed: int) -> np.ndarray:
+def generate_prbs(polynomial, length, seed):
+    # generate one prbs sequence from lfsr
     num_bits = polynomial.bit_length()
-    lfsr = [int(bit) for bit in format(seed, f"0{num_bits}b")]
+    lfsr = []
+    start_bits = format(seed, f"0{num_bits}b")
+    for bit_char in start_bits:
+        lfsr.append(int(bit_char))
     seq = []
     for _ in range(length):
         seq.append(lfsr[-1])
@@ -56,7 +53,8 @@ def generate_prbs(polynomial: int, length: int, seed: int) -> np.ndarray:
     return np.array(seq, dtype=np.int8)
 
 
-def circular_cross_correlation(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+def circular_cross_correlation(x, y):
+    # correlation vs lag (circular)
     n = max(len(x), len(y))
     x = np.pad(x, (0, n - len(x)), mode="constant")
     y = np.pad(y, (0, n - len(y)), mode="constant")
@@ -66,7 +64,7 @@ def circular_cross_correlation(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     return out
 
 
-def setup_adc_and_gpio(cfg: Config):
+def setup_adc_and_gpio(cfg):
     adc = ADS1256.ADS1256()
     adc.ADS1256_init()
     adc.ADS1256_WriteReg(0x00, 0x02)  # input buffer ON
@@ -81,36 +79,45 @@ def setup_adc_and_gpio(cfg: Config):
 
 
 def build_drive_sequences(cfg: Config):
-    length = (2 ** cfg.polynomial.bit_length()) - 1
+    # N = 2^m - 1 from tap bit length
+    length = (2 ** cfg.taps.bit_length()) - 1
+    # each drive gets same prbs but shifted phase
     shift = length // len(cfg.drive_pins)
-    prbs0 = generate_prbs(cfg.polynomial, length, cfg.seed)
-    prbs_matrix = np.vstack([np.roll(prbs0, i * shift) for i in range(len(cfg.drive_pins))])
+    prbs0 = generate_prbs(cfg.taps, length, cfg.phase)
+    prbs_rows = []
+    for i in range(len(cfg.drive_pins)):
+        row = np.roll(prbs0, i * shift)
+        prbs_rows.append(row)
+    prbs_matrix = np.vstack(prbs_rows)
     return prbs0, prbs_matrix, length
 
 
-def drive_one_bit(prbs_matrix: np.ndarray, bit_index: int, pins):
+def drive_one_bit(prbs_matrix, bit_index, pins):
     for i, pin in enumerate(pins):
         GPIO.output(pin, int(prbs_matrix[i, bit_index]))
 
 
-def collect_and_correlate(adc, cfg: Config, prbs0: np.ndarray, prbs_matrix: np.ndarray, length: int):
+def collect_and_correlate(adc, cfg, prbs0, prbs_matrix, length):
     raw_sense = np.zeros((len(cfg.sense_channels), length), dtype=np.float64)
     autocorr = np.zeros((len(cfg.sense_channels), length), dtype=np.float64)
 
+    # can only read one adc channel at a time -> scan sequentially
     for j, sense_ch in enumerate(cfg.sense_channels):
         adc.ADS1256_SetChannal(sense_ch)
+        # run through full prbs for this one sense channel
         for s in range(length):
             drive_one_bit(prbs_matrix, s, cfg.drive_pins)
             adc_value = adc.ADS1256_GetChannalValue(sense_ch)
             raw_sense[j, s] = adc_value * 5.0 / 0x7FFFFF
 
-        # "Autocorrelation" style plot used in lab flow: PRBS reference vs sensed waveform.
+        # correlate with prbs reference
         autocorr[j, :] = circular_cross_correlation(prbs0.astype(np.float64), raw_sense[j, :])
 
     return autocorr
 
 
-def save_autocorr_plot(autocorr: np.ndarray, cfg: Config):
+def save_autocorr_plot(autocorr, cfg):
+    # all 7 channels on one plot so we can compare peaks quickly
     plt.figure(figsize=(9, 5))
     for i, ch in enumerate(cfg.sense_channels):
         plt.plot(autocorr[i], label=f"Ch {ch}", linewidth=1.2)
@@ -125,13 +132,15 @@ def save_autocorr_plot(autocorr: np.ndarray, cfg: Config):
 
 
 def main():
+    # init
     adc = setup_adc_and_gpio(CFG)
     prbs0, prbs_matrix, length = build_drive_sequences(CFG)
 
     frame_count = 0
     start_time = time.time()
-    print(f"Saving latest plot to: {CFG.autocorr_plot_path}")
+    print(f"save path {CFG.autocorr_plot_path}")
 
+    # keep updating plot image while script runs
     while True:
         autocorr = collect_and_correlate(adc, CFG, prbs0, prbs_matrix, length)
         save_autocorr_plot(autocorr, CFG)
