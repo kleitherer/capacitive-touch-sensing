@@ -20,23 +20,23 @@ def prbs_generator(N, taps, initial_value=None, phase=0):
     """Generic PRBS generator using LFSR."""
     output = np.zeros(N)
     nbits = int(np.log2((N + 1)))  # N = 2^nbits - 1
-    print(f"Number of bits: {nbits}")
+    #print(f"Number of bits: {nbits}")
 
     if initial_value is not None:
         seq_values = initial_value
     else:
         seq_values = np.ones(nbits, dtype=int)
 
-    print(f"Initial sequence: {seq_values}")
-
+    #print(f"Initial sequence: {seq_values}")
+    
     taps_array = np.array([int(bit) for bit in format(taps, f'0{nbits}b')])
-    print(f"Taps array: {taps_array}")
+    #print(f"Taps array: {taps_array}")
     ones_indices = np.where(taps_array == 1)[0]
-    print(f"Ones indices: {ones_indices}")
+    #print(f"Ones indices: {ones_indices}")
 
     n_taps = len(ones_indices)
     xor_indices = [nbits - 1 - ones_indices[i] for i in range(n_taps)]
-    print(f"Xor indices: {xor_indices}")
+    #print(f"Xor indices: {xor_indices}")
 
     for i in range(N):
         output[i] = seq_values[-1]
@@ -48,7 +48,7 @@ def prbs_generator(N, taps, initial_value=None, phase=0):
     if phase != 0:
         output = np.roll(output, phase)
 
-    print(f"Final output: {output}")
+    #print(f"Final output: {output}")
     return output
 
 
