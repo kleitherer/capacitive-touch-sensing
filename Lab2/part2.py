@@ -14,7 +14,6 @@ import part1 as p1
 @dataclass(frozen=True)
 class Config:
     save_path: str
-    centroid_path: str
     drive_pins: tuple
     sense_channels: tuple
     taps: int
@@ -24,7 +23,6 @@ class Config:
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CFG = Config(
     save_path=os.path.join(SCRIPT_DIR, "heatmap_latest.png"),
-    centroid_path=os.path.join(SCRIPT_DIR, "centroid_ellipse.png"),
     # bcm pins from the lab wiring
     drive_pins=(21, 7, 12, 16, 20),
     # these are the 7 receive/sense lines we scan one by one
@@ -34,6 +32,15 @@ CFG = Config(
     phase=0x01,
     threshold=200.0,
 )
+
+# baseline + detection settings
+BASELINE_FRAMES = 60
+TOUCH_DELTA_THRESHOLD = 80.0
+
+# step 2 setting:
+# set to True when you place a still touch (ex: penny), then run once.
+RUN_JITTER_TEST = True
+JITTER_SAMPLES = 1000
 
 
 def centroid_and_ellipse(data, threshold):
@@ -147,51 +154,81 @@ def save_heatmap_image(xcor_plot, cfg):
     plt.close(fig)
 
 
-def save_centroid_image(xcor_plot, cfg):
-    result = centroid_and_ellipse(xcor_plot, cfg.threshold)
-    fig, ax = plt.subplots(figsize=(6, 5))
-    vmax_plot = max(cfg.threshold, np.max(xcor_plot), 1)
-    ax.imshow(xcor_plot, cmap="magma", interpolation="nearest", vmin=0, vmax=vmax_plot)
-    ax.invert_yaxis()
-    ax.invert_xaxis()
-    ax.set_xlabel("Drive line")
-    ax.set_ylabel("Channel")
-    ax.set_xticks(np.arange(len(cfg.drive_pins)))
-    ax.set_xticklabels([str(i) for i in range(len(cfg.drive_pins), 0, -1)])
-    ax.set_yticks(np.arange(len(cfg.sense_channels)))
-    ax.set_yticklabels([str(i) for i in range(len(cfg.sense_channels), 0, -1)])
+def capture_baseline(adc, cfg, prbs0, prbs_matrix, length, shift, n_frames):
+    baseline_acc = np.zeros((len(cfg.sense_channels), len(cfg.drive_pins)), dtype=np.float64)
+    for i in range(n_frames):
+        frame = compute_touch_maps(adc, cfg, prbs0, prbs_matrix, length, shift)
+        baseline_acc += frame
+        if (i + 1) % 10 == 0:
+            print(f"Baseline capture: {i + 1}/{n_frames}")
+    return baseline_acc / n_frames
 
-    if result is not None:
-        cx, cy, major, minor, angle = result
-        draw_centroid_overlay(ax, result)
-        ax.set_title(f"Centroid ({cx:.2f}, {cy:.2f}) | Major={major:.2f} Minor={minor:.2f}")
-    else:
-        ax.set_title("No touch detected")
 
-    plt.savefig(cfg.centroid_path, dpi=150, bbox_inches="tight")
-    plt.close()
+def apply_baseline_and_threshold(xcor, baseline_map, touch_thresh):
+    delta = xcor - baseline_map
+    touch_map = np.where(delta > touch_thresh, delta, 0.0)
+    touch_pairs = np.argwhere(delta > touch_thresh)  # [sense_idx, drive_idx]
+    return delta, touch_map, touch_pairs
+
+
+def run_jitter_test(adc, cfg, prbs0, prbs_matrix, length, shift, baseline_map):
+    print(f"Running jitter test for {JITTER_SAMPLES} samples...")
+    xs = []
+    ys = []
+
+    for i in range(JITTER_SAMPLES):
+        xcor = compute_touch_maps(adc, cfg, prbs0, prbs_matrix, length, shift)
+        _, touch_map, _ = apply_baseline_and_threshold(xcor, baseline_map, TOUCH_DELTA_THRESHOLD)
+        result = centroid_and_ellipse(touch_map, cfg.threshold)
+        if result is not None:
+            xs.append(result[0])
+            ys.append(result[1])
+        if (i + 1) % 100 == 0:
+            print(f"Jitter samples: {i + 1}/{JITTER_SAMPLES}")
+
+    if len(xs) < 2:
+        print("Not enough valid centroid points for jitter stats.")
+        return
+
+    xs = np.array(xs, dtype=float)
+    ys = np.array(ys, dtype=float)
+    x_rms = float(np.sqrt(np.mean((xs - np.mean(xs)) ** 2)))
+    y_rms = float(np.sqrt(np.mean((ys - np.mean(ys)) ** 2)))
+    r_rms = float(np.sqrt(np.mean((xs - np.mean(xs)) ** 2 + (ys - np.mean(ys)) ** 2)))
+
+    print("=== Jitter stats (still touch) ===")
+    print(f"Valid centroid samples: {len(xs)}")
+    print(f"X RMS jitter: {x_rms:.4f} cells")
+    print(f"Y RMS jitter: {y_rms:.4f} cells")
+    print(f"Radial RMS jitter: {r_rms:.4f} cells")
 
 
 def main():
     adc = p1.setup_adc_and_gpio(CFG)
     prbs0, prbs_matrix, length, shift = build_drive_sequences(CFG)
+    baseline_map = capture_baseline(adc, CFG, prbs0, prbs_matrix, length, shift, BASELINE_FRAMES)
+    print("Baseline capture complete.")
+
+    if RUN_JITTER_TEST:
+        print("Place coin now... starting jitter test in 5 seconds.")
+        time.sleep(5)
+        run_jitter_test(adc, CFG, prbs0, prbs_matrix, length, shift, baseline_map)
+        return
 
     frame_count = 0
     start_time = time.time()
 
     while True:
         xcor = compute_touch_maps(adc, CFG, prbs0, prbs_matrix, length, shift)
-        xcor_plot = xcor.copy()
-        xcor_plot[xcor_plot < CFG.threshold] = 0
+        _, xcor_plot, touch_pairs = apply_baseline_and_threshold(xcor, baseline_map, TOUCH_DELTA_THRESHOLD)
 
         save_heatmap_image(xcor_plot, CFG)
-        save_centroid_image(xcor_plot, CFG)
 
         frame_count += 1
         if frame_count % 10 == 0:
             elapsed = time.time() - start_time
             fps = frame_count / elapsed if elapsed > 0 else 0
-            print(f"Frames: {frame_count}, {fps:.2f} Hz")
+            print(f"Frames: {frame_count}, {fps:.2f} Hz | active pairs: {len(touch_pairs)}")
 
 
 if __name__ == "__main__":

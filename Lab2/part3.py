@@ -17,7 +17,6 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 @dataclass(frozen=True)
 class Config:
     save_path: str
-    centroid_path: str
     drive_pins: tuple
     sense_channels: tuple
     taps: int
@@ -26,7 +25,6 @@ class Config:
 
 CFG = Config(
     save_path=os.path.join(SCRIPT_DIR, "part3_heatmap_latest.png"),
-    centroid_path=os.path.join(SCRIPT_DIR, "part3_centroid_ellipse.png"),
     # bcm pins from the lab wiring
     drive_pins=(21, 7, 12, 16, 20),
     # these are the 7 receive/sense lines we scan one by one
@@ -170,23 +168,6 @@ def save_outputs(xcor_plot, cfg, raw_result, kf_state):
         ax.legend(loc="lower right", fontsize=8)
     fig.savefig(cfg.save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-
-    # Centroid map view
-    fig2, ax2 = plt.subplots(figsize=(6, 5))
-    vmax_plot = max(cfg.threshold, np.max(xcor_plot), 1)
-    ax2.imshow(xcor_plot, cmap="magma", interpolation="nearest", vmin=0, vmax=vmax_plot)
-    apply_axis_format(ax2, cfg)
-    draw_ellipse(ax2, raw_result, "white")
-    if raw_result is not None:
-        ax2.plot(raw_result[0], raw_result[1], "w+", markersize=10, markeredgewidth=2)
-    if kf_state is not None:
-        fx, fy, vx, vy = kf_state
-        ax2.plot(fx, fy, "co", markersize=7)
-        ax2.set_title(f"Kalman centroid ({fx:.2f}, {fy:.2f}) | V=({vx:.2f},{vy:.2f})")
-    else:
-        ax2.set_title("No touch detected")
-    fig2.savefig(cfg.centroid_path, dpi=150, bbox_inches="tight")
-    plt.close(fig2)
 
 
 def main():
