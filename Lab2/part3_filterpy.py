@@ -33,7 +33,7 @@ CFG = Config(
     save_path=os.path.join(SCRIPT_DIR, "part3_heatmap_latest.png"),
     drive_pins=(21, 7, 12, 16, 20),
     sense_channels=(1, 2, 3, 4, 5, 6, 7),
-    taps=0xB8,
+    taps=p1.taps_prbs255,  # match part1/part2 tap set
     phase=0x01,
     threshold=200.0,
 )

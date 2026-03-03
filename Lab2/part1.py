@@ -12,7 +12,17 @@ import RPi.GPIO as GPIO
 # add ADS1256 driver folder path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(SCRIPT_DIR, "High-Precision-AD-DA-Board-Demo-Code", "RaspberryPI", "ADS1256", "python3"))
-import ADS1256 
+import ADS1256
+
+# PRBS tap polynomials (hex). Length = 2^nbits - 1 for nbits from tap width.
+taps_prbs7 = 0x6
+taps_prbs15 = 0xC
+taps_prbs31 = 0x14
+taps_prbs63 = 0x30
+taps_prbs127 = 0x60
+taps_prbs255 = 0xB8
+taps_prbs511 = 0x110
+taps_prbs1023 = 0x240
 
 # using class bc easier to copy/paste to part2 and part3
 @dataclass(frozen=True)
@@ -29,28 +39,43 @@ CFG = Config(
     drive_pins=(21, 7, 12, 16, 20),
     # these are the 7 receive/sense lines we scan one by one
     sense_channels=(1, 2, 3, 4, 5, 6, 7),
-    # using prbs-8 taps here
-    taps=0xB8,
+    taps=taps_prbs255,  # PRBS-255 (8-bit); use taps_prbs511 etc. for other lengths
     phase=0x01,
 )
 
 
-def generate_prbs(polynomial, length, seed):
-    # generate one prbs sequence from lfsr
-    num_bits = polynomial.bit_length()
-    lfsr = []
-    start_bits = format(seed, f"0{num_bits}b")
-    for bit_char in start_bits:
-        lfsr.append(int(bit_char))
-    seq = []
-    for _ in range(length):
-        seq.append(lfsr[-1])
-        feedback = 0
-        for bit_pos in range(num_bits):
-            if (polynomial >> bit_pos) & 1:
-                feedback ^= lfsr[-(bit_pos + 1)]
-        lfsr = lfsr[1:] + [feedback]
-    return np.array(seq, dtype=np.int8)
+def generate_prbs(taps, length, phase=0, initial_value=None):
+    """
+    Generate one PRBS sequence from LFSR (same logic from HW3)
+    taps: polynomial in hex (e.g. 0xB8 for PRBS-8, 0x110 for PRBS-511).
+    length: sequence length N (e.g. 255 for 8-bit, 511 for 9-bit).
+    phase: circular shift applied to output (for orthogonal drive phases).
+    initial_value: optional initial LFSR state (array of length nbits); default ones.
+    """
+    nbits = int(np.log2(length + 1))  # N = 2^nbits - 1
+    if initial_value is not None:
+        if np.isscalar(initial_value):
+            seq_values = np.array([int(b) for b in format(int(initial_value), f"0{nbits}b")], dtype=int)
+        else:
+            seq_values = np.asarray(initial_value, dtype=int)
+    else:
+        seq_values = np.ones(nbits, dtype=int)
+
+    taps_array = np.array([int(b) for b in format(taps, f"0{nbits}b")])
+    ones_indices = np.where(taps_array == 1)[0]
+    xor_indices = [nbits - 1 - ones_indices[i] for i in range(len(ones_indices))]
+
+    output = np.zeros(length, dtype=np.float64)
+    for i in range(length):
+        output[i] = seq_values[-1]
+        vals_to_xor = seq_values[xor_indices]
+        xor_result = np.bitwise_xor.reduce(vals_to_xor)
+        seq_values = np.roll(seq_values, 1)
+        seq_values[0] = xor_result
+
+    if phase != 0:
+        output = np.roll(output, int(phase))
+    return np.array(output, dtype=np.int8)
 
 
 def circular_cross_correlation(x, y):

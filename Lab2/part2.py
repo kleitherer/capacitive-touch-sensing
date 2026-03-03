@@ -27,8 +27,7 @@ CFG = Config(
     drive_pins=(21, 7, 12, 16, 20),
     # these are the 7 receive/sense lines we scan one by one
     sense_channels=(1, 2, 3, 4, 5, 6, 7),
-    # using prbs-8 taps here
-    taps=0xB8,
+    taps=p1.taps_prbs255,  # PRBS-255; use p1.taps_prbs511 etc. for other lengths
     phase=0x01,
     threshold=200.0,
 )
