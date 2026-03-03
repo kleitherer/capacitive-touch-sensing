@@ -25,6 +25,7 @@ taps_prbs511 = 0x110
 taps_prbs1023 = 0x240
 
 # using class bc easier to copy/paste to part2 and part3
+# got idea for this from Cursor
 @dataclass(frozen=True)
 class Config:
     autocorr_plot_path: str
@@ -103,6 +104,10 @@ def setup_adc_and_gpio(cfg):
 
 
 def build_drive_sequences(cfg: Config):
+    """
+    One reference PRBS (prbs0) plus a matrix of phase-shifted copies, 
+    one row per drive line, so correlations are separable by drive.
+    """
     # N = 2^m - 1 from tap bit length
     length = (2 ** cfg.taps.bit_length()) - 1
     # each drive gets same prbs but shifted phase
