@@ -1,3 +1,12 @@
+"""
+From lab:
+
+With the centroid computation, filter the touches using an appropriate Kalman filter to smooth
+out the touch X/Y and determine the touch velocity as it moves across the sensor.
+Depending on your frame rate, you may have to slide slowly, but this should give you an idea
+of how we begin to build classifiers for gestures
+
+"""
 import os
 import time
 from dataclasses import dataclass
@@ -136,7 +145,7 @@ def apply_axis_format(ax, cfg):
 
 
 def save_outputs(xcor_plot, cfg, raw_result, kf_state):
-    # Heatmap with raw ellipse + filtered centroid/velocity
+    # Heatmap with raw ellipse + filtered centroid/velocity 
     fig, ax = plt.subplots(figsize=(6, 5))
     vmax_h = max(cfg.threshold, np.max(xcor_plot), 1)
     im = ax.imshow(xcor_plot, cmap="RdPu", interpolation="nearest", vmin=0, vmax=vmax_h)
