@@ -36,11 +36,6 @@ CFG = Config(
 BASELINE_FRAMES = 60
 TOUCH_DELTA_THRESHOLD = 80.0
 
-# step 2 setting:
-# set to True when you place a still touch (ex: penny), then run once.
-RUN_JITTER_TEST = False
-JITTER_SAMPLES = 1000
-
 
 def centroid_and_ellipse(data, threshold):
     w = np.maximum(data, 0)
@@ -169,51 +164,12 @@ def apply_baseline_and_threshold(xcor, baseline_map, touch_thresh):
     touch_pairs = np.argwhere(delta > touch_thresh)  # [sense_idx, drive_idx]
     return delta, touch_map, touch_pairs
 
-
-def run_jitter_test(adc, cfg, prbs0, prbs_matrix, length, shift, baseline_map):
-    print(f"Running jitter test for {JITTER_SAMPLES} samples...")
-    xs = []
-    ys = []
-
-    for i in range(JITTER_SAMPLES):
-        xcor = compute_touch_maps(adc, cfg, prbs0, prbs_matrix, length, shift)
-        _, touch_map, _ = apply_baseline_and_threshold(xcor, baseline_map, TOUCH_DELTA_THRESHOLD)
-        result = centroid_and_ellipse(touch_map, cfg.threshold)
-        if result is not None:
-            xs.append(result[0])
-            ys.append(result[1])
-        if (i + 1) % 100 == 0:
-            print(f"Jitter samples: {i + 1}/{JITTER_SAMPLES}")
-
-    if len(xs) < 2:
-        print("Not enough valid centroid points for jitter stats.")
-        return
-
-    xs = np.array(xs, dtype=float)
-    ys = np.array(ys, dtype=float)
-    x_rms = float(np.sqrt(np.mean((xs - np.mean(xs)) ** 2)))
-    y_rms = float(np.sqrt(np.mean((ys - np.mean(ys)) ** 2)))
-    r_rms = float(np.sqrt(np.mean((xs - np.mean(xs)) ** 2 + (ys - np.mean(ys)) ** 2)))
-
-    print("=== Jitter stats (still touch) ===")
-    print(f"Valid centroid samples: {len(xs)}")
-    print(f"X RMS jitter: {x_rms:.4f} cells")
-    print(f"Y RMS jitter: {y_rms:.4f} cells")
-    print(f"Radial RMS jitter: {r_rms:.4f} cells")
-
-
 def main():
+    
     adc = p1.setup_adc_and_gpio(CFG)
     prbs0, prbs_matrix, length, shift = build_drive_sequences(CFG)
     baseline_map = capture_baseline(adc, CFG, prbs0, prbs_matrix, length, shift, BASELINE_FRAMES)
     print("Baseline capture complete.")
-
-    if RUN_JITTER_TEST:
-        print("Place coin now... starting jitter test in 5 seconds.")
-        time.sleep(5)
-        run_jitter_test(adc, CFG, prbs0, prbs_matrix, length, shift, baseline_map)
-        return
-
     frame_count = 0
     start_time = time.time()
 

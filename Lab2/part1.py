@@ -79,7 +79,6 @@ def generate_prbs(taps, length, phase=0, initial_value=None):
 
 
 def circular_cross_correlation(x, y):
-    # correlation vs lag (circular)
     n = max(len(x), len(y))
     x = np.pad(x, (0, n - len(x)), mode="constant")
     y = np.pad(y, (0, n - len(y)), mode="constant")
@@ -92,7 +91,7 @@ def circular_cross_correlation(x, y):
 def setup_adc_and_gpio(cfg):
     adc = ADS1256.ADS1256()
     adc.ADS1256_init()
-    adc.ADS1256_WriteReg(0x00, 0x02)  # input buffer ON
+    adc.ADS1256_WriteReg(0x00, 0x02)  # this is what tells us our input buffer is ON
 
     GPIO.setwarnings(False)
     GPIO.setmode(GPIO.BCM)
@@ -123,10 +122,17 @@ def drive_one_bit(prbs_matrix, bit_index, pins):
 
 
 def collect_and_correlate(adc, cfg, prbs0, prbs_matrix, length):
+    """
+    We need to record readings from ADC for each sense line and do it sequentially
+    Then we run one full PRBS and correlate it with each sense line reading to see lag vs correlation.
+
+    To make things easier, restart the PRBS sequence after switching the ADC to a new sense line (that way, 
+    the PRBS sequence timing is exactly the same for every sensing frame). 
+    """
     raw_sense = np.zeros((len(cfg.sense_channels), length), dtype=np.float64)
     autocorr = np.zeros((len(cfg.sense_channels), length), dtype=np.float64)
 
-    # can only read one adc channel at a time -> scan sequentially
+    # can only read one adc channel at a time
     for j, sense_ch in enumerate(cfg.sense_channels):
         adc.ADS1256_SetChannal(sense_ch)
         # run through full prbs for this one sense channel
@@ -141,23 +147,8 @@ def collect_and_correlate(adc, cfg, prbs0, prbs_matrix, length):
     return autocorr
 
 
-def save_autocorr_plot(autocorr, cfg):
-    # all 7 channels on one plot so we can compare peaks quickly
-    plt.figure(figsize=(9, 5))
-    for i, ch in enumerate(cfg.sense_channels):
-        plt.plot(autocorr[i], label=f"Ch {ch}", linewidth=1.2)
-    plt.grid(True, alpha=0.3)
-    plt.xlabel("Lag")
-    plt.ylabel("Correlation")
-    plt.title("Autocorrelation-style Correlation for 7 Sense Channels")
-    plt.legend(loc="upper right", fontsize=8)
-    plt.xlim(0, autocorr.shape[1] - 1)
-    plt.savefig(cfg.autocorr_plot_path, dpi=150, bbox_inches="tight")
-    plt.close()
-
-
 def main():
-    # init
+    # initialize everything
     adc = setup_adc_and_gpio(CFG)
     prbs0, prbs_matrix, length = build_drive_sequences(CFG)
 
@@ -165,10 +156,20 @@ def main():
     start_time = time.time()
     print(f"save path {CFG.autocorr_plot_path}")
 
-    # keep updating plot image while script runs
+    # we need to keep updating plot image while script runs
     while True:
         autocorr = collect_and_correlate(adc, CFG, prbs0, prbs_matrix, length)
-        save_autocorr_plot(autocorr, CFG)
+        plt.figure(figsize=(9, 5))
+        for i, ch in enumerate(CFG.sense_channels):
+            plt.plot(autocorr[i], label=f"Ch {ch}", linewidth=1.2)
+        plt.grid(True, alpha=0.3)
+        plt.xlabel("Lag")
+        plt.ylabel("Correlation")
+        plt.title("Autocorrelation-style Correlation for 7 Sense Channels")
+        plt.legend(loc="upper right", fontsize=8)
+        plt.xlim(0, autocorr.shape[1] - 1)
+        plt.savefig(CFG.autocorr_plot_path, dpi=150, bbox_inches="tight")
+        plt.close()
 
         frame_count += 1
         if frame_count % 10 == 0:
